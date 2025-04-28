@@ -4,3 +4,5 @@ openpyxl
 matplotlib
 pysftp
 xlsxwriter
+gspread
+google-auth
