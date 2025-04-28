@@ -76,7 +76,8 @@ if stock_files and product_file:
         try:
             # Authentification Google Sheets
             scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-            gcp_service_account_info = json.loads(st.secrets["gcp_service_account"])
+            with open("valostock-gsheet-a3fb9b0b374a.json") as source:
+    gcp_service_account_info = json.load(source)
             creds = service_account.Credentials.from_service_account_info(gcp_service_account_info, scopes=scopes)
             client = gspread.authorize(creds)
             sheet = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
