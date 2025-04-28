@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import json
 from datetime import datetime
 import gspread
 from google.oauth2 import service_account
@@ -16,7 +17,7 @@ SPREADSHEET_ID = "1lOtH16m_xs1-EzQ7D_tp8wZz3fZu2eTbLQFU099MSNw"
 SHEET_NAME = "Données"
 LOOKER_URL = "https://lookerstudio.google.com/s/i1sjkqxFJro"
 
-# Email config depuis secrets.toml ou Streamlit Cloud
+# Email config depuis secrets
 SMTP_SERVER = st.secrets["email"]["smtp_server"]
 SMTP_PORT = st.secrets["email"]["smtp_port"]
 SMTP_USER = st.secrets["email"]["smtp_user"]
@@ -73,9 +74,9 @@ if stock_files and product_file:
 
     if st.button("📤 Mettre à jour Google Sheets + envoyer par e-mail"):
         try:
-            # MAJ Google Sheets
+            # Authentification Google Sheets
             scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-            gcp_service_account_info = st.secrets["gcp_service_account"]
+            gcp_service_account_info = json.loads(st.secrets["gcp_service_account"])
             creds = service_account.Credentials.from_service_account_info(gcp_service_account_info, scopes=scopes)
             client = gspread.authorize(creds)
             sheet = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
@@ -84,7 +85,7 @@ if stock_files and product_file:
             data = [historique_df.columns.tolist()] + historique_df.values.tolist()
             sheet.update("A1", data)
 
-            # Envoi email
+            # Préparer et envoyer email
             default_extra_recipients = [
                 "alexandre.audinot@latribu.fr",
                 "jm.lelann@latribu.fr",
