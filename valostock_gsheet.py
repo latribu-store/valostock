@@ -25,17 +25,22 @@ SMTP_USER = st.secrets["email"]["smtp_user"]
 SMTP_PASSWORD = st.secrets["email"]["smtp_password"]
 DEFAULT_RECEIVER = st.secrets["email"]["receiver"]
 
-st.sidebar.header("📂 Importer les fichiers")
-stock_files = st.sidebar.file_uploader("Fichiers de stock (un par magasin)", type=["csv"], accept_multiple_files=True)
-product_file = st.sidebar.file_uploader("Base produit (Excel)", type=["xls", "xlsx"])
-emails_supp = st.sidebar.text_input("📧 Autres destinataires (séparés par des virgules)")
-
-# 🔥 Récupération du JSON Service Account depuis Google Drive
+# 🔥 Lecture dynamique du fichier Service Account depuis Google Drive
 file_id = "1maTmKuTysnA78_XmZsb_QyXrin3rhEHZ"
 url = f"https://drive.google.com/uc?id={file_id}"
 response = requests.get(url)
 response.raise_for_status()
 gcp_service_account_info = json.loads(response.content)
+
+# Authentification Google Sheets
+scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+creds = service_account.Credentials.from_service_account_info(gcp_service_account_info, scopes=scopes)
+client = gspread.authorize(creds)
+
+st.sidebar.header("📂 Importer les fichiers")
+stock_files = st.sidebar.file_uploader("Fichiers de stock (un par magasin)", type=["csv"], accept_multiple_files=True)
+product_file = st.sidebar.file_uploader("Base produit (Excel)", type=["xls", "xlsx"])
+emails_supp = st.sidebar.text_input("📧 Autres destinataires (séparés par des virgules)")
 
 if stock_files and product_file:
     stock_list = [pd.read_csv(f, sep=';') for f in stock_files]
@@ -82,10 +87,6 @@ if stock_files and product_file:
 
     if st.button("📤 Mettre à jour Google Sheets + envoyer par e-mail"):
         try:
-            # Authentification Google Sheets
-            scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-            creds = service_account.Credentials.from_service_account_info(gcp_service_account_info, scopes=scopes)
-            client = gspread.authorize(creds)
             sheet = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
 
             sheet.clear()
