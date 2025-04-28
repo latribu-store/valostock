@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import os
-import json
 from datetime import datetime
 import gspread
 from google.oauth2 import service_account
@@ -76,7 +75,7 @@ if stock_files and product_file:
         try:
             # MAJ Google Sheets
             scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-            gcp_service_account_info = json.loads(st.secrets["gcp_service_account"])
+            gcp_service_account_info = st.secrets["gcp_service_account"]
             creds = service_account.Credentials.from_service_account_info(gcp_service_account_info, scopes=scopes)
             client = gspread.authorize(creds)
             sheet = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
