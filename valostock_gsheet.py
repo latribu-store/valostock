@@ -149,8 +149,9 @@ if stock_files and product_file:
     if st.button("📤 Mettre à jour Google Sheets + envoyer par e-mail"):
         try:
             # Upsert: merge existing sheet content with historique_df
-df_all = _gsheet_upsert_dataframe(SPREADSHEET_ID, SHEET_NAME, historique_df)
-# Préparer et envoyer email
+            df_all = _gsheet_upsert_dataframe(SPREADSHEET_ID, SHEET_NAME, historique_df)
+
+            # Préparer et envoyer email
             default_extra_recipients = [
                 "alexandre.audinot@latribu.fr",
                 "jm.lelann@latribu.fr",
