@@ -46,7 +46,6 @@ def _gsheet_read_as_df(sheet_id, tab_name):
     try:
         ws = client.open_by_key(sheet_id).worksheet(tab_name)
     except Exception:
-        # create if missing
         sh = client.open_by_key(sheet_id)
         ws = sh.add_worksheet(title=tab_name, rows=2, cols=20)
     rows = ws.get_all_values()
@@ -62,24 +61,23 @@ def _gsheet_read_as_df(sheet_id, tab_name):
 def _gsheet_upsert_dataframe(sheet_id, tab_name, df_new):
     # Read existing
     df_old, ws = _gsheet_read_as_df(sheet_id, tab_name)
-    # Normalize and align columns
+    # Align columns
     if not df_old.empty:
-        # ensure identical set of columns
         for c in df_new.columns:
             if c not in df_old.columns:
                 df_old[c] = pd.NA
         for c in df_old.columns:
             if c not in df_new.columns:
                 df_new[c] = pd.NA
-        df_old = df_old[df_new.columns]  # align order
-    # Normalize date column if present
+        df_old = df_old[df_new.columns]
+    # Normalize date
     if "date" in df_new.columns:
         df_new["date"] = _ensure_date_series(df_new["date"])
     if not df_old.empty and "date" in df_old.columns:
         df_old["date"] = _ensure_date_series(df_old["date"])
     # Concatenate
     df_all = pd.concat([df_old, df_new], ignore_index=True) if not df_old.empty else df_new.copy()
-    # Build composite key (date|organisationId|brand)
+    # Deduplicate on composite key (date|organisationId|brand)
     key_cols = [c for c in ["date", "organisationId", "brand"] if c in df_all.columns]
     if key_cols:
         key = df_all[key_cols].astype(str).agg("|".join, axis=1)
@@ -92,7 +90,7 @@ def _gsheet_upsert_dataframe(sheet_id, tab_name, df_new):
     sort_cols = [c for c in ["date", "organisationId", "brand"] if c in df_all.columns]
     if sort_cols:
         df_all = df_all.sort_values(sort_cols)
-    # Write back (clear then full write to avoid partial leftovers)
+    # Write back
     ws.clear()
     values = [list(df_all.columns)] + df_all.astype(object).where(pd.notnull(df_all), "").values.tolist()
     ws.update("A1", values)
@@ -150,8 +148,7 @@ if stock_files and product_file:
 
     if st.button("📤 Mettre à jour Google Sheets + envoyer par e-mail"):
         try:
-            sheet = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
-# Upsert: merge existing sheet content with historique_df
+            # Upsert: merge existing sheet content with historique_df
 df_all = _gsheet_upsert_dataframe(SPREADSHEET_ID, SHEET_NAME, historique_df)
 # Préparer et envoyer email
             default_extra_recipients = [
