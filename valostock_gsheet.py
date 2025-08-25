@@ -26,7 +26,7 @@ SMTP_PASSWORD = st.secrets["email"]["smtp_password"]
 DEFAULT_RECEIVER = st.secrets["email"]["receiver"]
 
 # 🔥 Lecture dynamique du fichier Service Account depuis Google Drive
-file_id = "1puzcgHIh0LtLUCqBTA4-kgQPYKt_2W3Q"
+file_id = "1maTmKuTysnA78_XmZsb_QyXrin3rhEHZ"
 url = f"https://drive.google.com/uc?id={file_id}"
 response = requests.get(url)
 response.raise_for_status()
@@ -36,6 +36,69 @@ gcp_service_account_info = json.loads(response.content)
 scopes = ["https://www.googleapis.com/auth/spreadsheets"]
 creds = service_account.Credentials.from_service_account_info(gcp_service_account_info, scopes=scopes)
 client = gspread.authorize(creds)
+
+# ---- Helpers: Google Sheets safe upsert (append without overwriting) ----
+def _ensure_date_series(s):
+    ds = pd.to_datetime(s, errors="coerce")
+    return ds.dt.strftime("%Y-%m-%d")
+
+def _gsheet_read_as_df(sheet_id, tab_name):
+    try:
+        ws = client.open_by_key(sheet_id).worksheet(tab_name)
+    except Exception:
+        # create if missing
+        sh = client.open_by_key(sheet_id)
+        ws = sh.add_worksheet(title=tab_name, rows=2, cols=20)
+    rows = ws.get_all_values()
+    if not rows:
+        return pd.DataFrame(), ws
+    header = rows[0]
+    data = rows[1:]
+    if not data:
+        return pd.DataFrame(columns=header), ws
+    df = pd.DataFrame(data, columns=header)
+    return df, ws
+
+def _gsheet_upsert_dataframe(sheet_id, tab_name, df_new):
+    # Read existing
+    df_old, ws = _gsheet_read_as_df(sheet_id, tab_name)
+    # Normalize and align columns
+    if not df_old.empty:
+        # ensure identical set of columns
+        for c in df_new.columns:
+            if c not in df_old.columns:
+                df_old[c] = pd.NA
+        for c in df_old.columns:
+            if c not in df_new.columns:
+                df_new[c] = pd.NA
+        df_old = df_old[df_new.columns]  # align order
+    # Normalize date column if present
+    if "date" in df_new.columns:
+        df_new["date"] = _ensure_date_series(df_new["date"])
+    if not df_old.empty and "date" in df_old.columns:
+        df_old["date"] = _ensure_date_series(df_old["date"])
+    # Concatenate
+    df_all = pd.concat([df_old, df_new], ignore_index=True) if not df_old.empty else df_new.copy()
+    # Build composite key (date|organisationId|brand)
+    key_cols = [c for c in ["date", "organisationId", "brand"] if c in df_all.columns]
+    if key_cols:
+        key = df_all[key_cols].astype(str).agg("|".join, axis=1)
+        df_all = df_all.loc[~key.duplicated(keep="last")].copy()
+    # Recompute est_derniere_date
+    if "date" in df_all.columns:
+        dmax = pd.to_datetime(df_all["date"], errors="coerce").max()
+        df_all["est_derniere_date"] = (pd.to_datetime(df_all["date"], errors="coerce") == dmax)
+    # Sort for readability
+    sort_cols = [c for c in ["date", "organisationId", "brand"] if c in df_all.columns]
+    if sort_cols:
+        df_all = df_all.sort_values(sort_cols)
+    # Write back (clear then full write to avoid partial leftovers)
+    ws.clear()
+    values = [list(df_all.columns)] + df_all.astype(object).where(pd.notnull(df_all), "").values.tolist()
+    ws.update("A1", values)
+    return df_all
+# ---- end helpers ----
+
 
 st.sidebar.header("📂 Importer les fichiers")
 stock_files = st.sidebar.file_uploader("Fichiers de stock (un par magasin)", type=["csv"], accept_multiple_files=True)
@@ -88,12 +151,9 @@ if stock_files and product_file:
     if st.button("📤 Mettre à jour Google Sheets + envoyer par e-mail"):
         try:
             sheet = client.open_by_key(SPREADSHEET_ID).worksheet(SHEET_NAME)
-
-            sheet.clear()
-            data = [historique_df.columns.tolist()] + historique_df.values.tolist()
-            sheet.update("A1", data)
-
-            # Préparer et envoyer email
+# Upsert: merge existing sheet content with historique_df
+df_all = _gsheet_upsert_dataframe(SPREADSHEET_ID, SHEET_NAME, historique_df)
+# Préparer et envoyer email
             default_extra_recipients = [
                 "alexandre.audinot@latribu.fr",
                 "jm.lelann@latribu.fr",
