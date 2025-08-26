@@ -6,6 +6,7 @@ import requests
 from datetime import datetime
 import gspread
 from google.oauth2 import service_account
+from google.auth.transport.requests import Request
 import smtplib
 from email.message import EmailMessage
 
@@ -25,17 +26,35 @@ SMTP_USER = st.secrets["email"]["smtp_user"]
 SMTP_PASSWORD = st.secrets["email"]["smtp_password"]
 DEFAULT_RECEIVER = st.secrets["email"]["receiver"]
 
-# 🔥 Lecture dynamique du fichier Service Account depuis Google Drive
-file_id = "12O9eFGFmwTu1n6kF4AIDIm0KXKMIgOvg"
-url = f"https://drive.google.com/uc?id={file_id}"
+# ====== (MODIF #1) Charger le JSON depuis VOTRE lien Drive direct ======
+# (remplace l'ancien bloc file_id/url)
+url = "https://drive.google.com/uc?export=download&id=12O9eFGFmwTu1n6kF4AIDIm0KXKMIgOvg"
 response = requests.get(url)
 response.raise_for_status()
-gcp_service_account_info = json.loads(response.content)
+gcp_service_account_info = json.loads(response.text)
 
-# Authentification Google Sheets
-scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-creds = service_account.Credentials.from_service_account_info(gcp_service_account_info, scopes=scopes)
+# ====== (MODIF #2) Auth Sheets + Drive + test refresh token ======
+scopes = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+creds = service_account.Credentials.from_service_account_info(
+    gcp_service_account_info, scopes=scopes
+)
 client = gspread.authorize(creds)
+
+# Debug utile
+st.caption(f"Service account: {gcp_service_account_info.get('client_email')}")
+st.caption(f"private_key_id: {gcp_service_account_info.get('private_key_id')}")
+
+# Test d'accès token (lever tout doute sur invalid_grant en amont)
+try:
+    creds.refresh(Request())
+    st.success("✅ Clé OK (refresh token réussi).")
+except Exception as e:
+    st.error("❌ Clé invalide / JSON corrompu (échec refresh token).")
+    st.exception(e)
+    st.stop()
 
 # ---- Helpers: Google Sheets safe upsert (append without overwriting) ----
 def _ensure_date_series(s):
@@ -96,7 +115,6 @@ def _gsheet_upsert_dataframe(sheet_id, tab_name, df_new):
     ws.update("A1", values)
     return df_all
 # ---- end helpers ----
-
 
 st.sidebar.header("📂 Importer les fichiers")
 stock_files = st.sidebar.file_uploader("Fichiers de stock (un par magasin)", type=["csv"], accept_multiple_files=True)
