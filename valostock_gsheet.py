@@ -26,7 +26,7 @@ SMTP_PASSWORD = st.secrets["email"]["smtp_password"]
 DEFAULT_RECEIVER = st.secrets["email"]["receiver"]
 
 # 🔥 Lecture dynamique du fichier Service Account depuis Google Drive
-file_id = "1maTmKuTysnA78_XmZsb_QyXrin3rhEHZ"
+file_id = "12O9eFGFmwTu1n6kF4AIDIm0KXKMIgOvg"
 url = f"https://drive.google.com/uc?id={file_id}"
 response = requests.get(url)
 response.raise_for_status()
