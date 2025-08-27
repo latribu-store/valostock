@@ -1,67 +1,45 @@
 import streamlit as st
 import pandas as pd
-import os
-import json
-import requests
+import os, json, requests
 from datetime import datetime
 import gspread
 from google.oauth2 import service_account
-from google.auth.transport.requests import Request
 import smtplib
 from email.message import EmailMessage
 
 st.set_page_config(page_title="Valorisation vers Google Sheets", layout="wide")
 st.title("📊 App - Valorisation vers Google Sheets (Looker Ready)")
 
-# Config fichiers
+# Config
 HISTO_FILE = "historique_valorisation.csv"
 SPREADSHEET_ID = "1lOtH16m_xs1-EzQ7D_tp8wZz3fZu2eTbLQFU099MSNw"
 SHEET_NAME = "Données"
 LOOKER_URL = "https://lookerstudio.google.com/s/i1sjkqxFJro"
 
-# Email config depuis secrets
 SMTP_SERVER = st.secrets["email"]["smtp_server"]
 SMTP_PORT = st.secrets["email"]["smtp_port"]
 SMTP_USER = st.secrets["email"]["smtp_user"]
 SMTP_PASSWORD = st.secrets["email"]["smtp_password"]
 DEFAULT_RECEIVER = st.secrets["email"]["receiver"]
 
-# ====== (MODIF #1) Charger le JSON depuis VOTRE lien Drive direct ======
-# (remplace l'ancien bloc file_id/url)
-url = "https://drive.google.com/uc?export=download&id=12O9eFGFmwTu1n6kF4AIDIm0KXKMIgOvg"
+# === Auth EXACTEMENT comme avant (Drive + response.content) ===
+file_id = "12O9eFGFmwTu1n6kF4AIDIm0KXKMIgOvg"  # <- votre fichier JSON sur Drive
+url = f"https://drive.google.com/uc?id={file_id}"
 response = requests.get(url)
 response.raise_for_status()
-gcp_service_account_info = json.loads(response.text)
+gcp_service_account_info = json.loads(response.content)
 
-# ====== (MODIF #2) Auth Sheets + Drive + test refresh token ======
-scopes = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-creds = service_account.Credentials.from_service_account_info(
-    gcp_service_account_info, scopes=scopes
-)
+# Scopes identiques à avant
+scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+creds = service_account.Credentials.from_service_account_info(gcp_service_account_info, scopes=scopes)
 client = gspread.authorize(creds)
 
-# Debug utile
-st.caption(f"Service account: {gcp_service_account_info.get('client_email')}")
-st.caption(f"private_key_id: {gcp_service_account_info.get('private_key_id')}")
-
-# Test d'accès token (lever tout doute sur invalid_grant en amont)
-try:
-    creds.refresh(Request())
-    st.success("✅ Clé OK (refresh token réussi).")
-except Exception as e:
-    st.error("❌ Clé invalide / JSON corrompu (échec refresh token).")
-    st.exception(e)
-    st.stop()
-
-# ---- Helpers: Google Sheets safe upsert (append without overwriting) ----
-def _ensure_date_series(s):
+# ---- Helpers upsert (append sans écraser) ----
+def _ensure_date_series(s: pd.Series) -> pd.Series:
     ds = pd.to_datetime(s, errors="coerce")
     return ds.dt.strftime("%Y-%m-%d")
 
-def _gsheet_read_as_df(sheet_id, tab_name):
+def _gsheet_read_as_df(sheet_id: str, tab_name: str):
     try:
         ws = client.open_by_key(sheet_id).worksheet(tab_name)
     except Exception:
@@ -77,10 +55,10 @@ def _gsheet_read_as_df(sheet_id, tab_name):
     df = pd.DataFrame(data, columns=header)
     return df, ws
 
-def _gsheet_upsert_dataframe(sheet_id, tab_name, df_new):
-    # Read existing
+def _gsheet_upsert_dataframe(sheet_id: str, tab_name: str, df_new: pd.DataFrame) -> pd.DataFrame:
+    # Lire existant
     df_old, ws = _gsheet_read_as_df(sheet_id, tab_name)
-    # Align columns
+    # Aligner colonnes
     if not df_old.empty:
         for c in df_new.columns:
             if c not in df_old.columns:
@@ -89,32 +67,31 @@ def _gsheet_upsert_dataframe(sheet_id, tab_name, df_new):
             if c not in df_new.columns:
                 df_new[c] = pd.NA
         df_old = df_old[df_new.columns]
-    # Normalize date
+    # Normaliser les dates
     if "date" in df_new.columns:
         df_new["date"] = _ensure_date_series(df_new["date"])
     if not df_old.empty and "date" in df_old.columns:
         df_old["date"] = _ensure_date_series(df_old["date"])
-    # Concatenate
+    # Concat + dédup (clé composite date|organisationId|brand)
     df_all = pd.concat([df_old, df_new], ignore_index=True) if not df_old.empty else df_new.copy()
-    # Deduplicate on composite key (date|organisationId|brand)
     key_cols = [c for c in ["date", "organisationId", "brand"] if c in df_all.columns]
     if key_cols:
         key = df_all[key_cols].astype(str).agg("|".join, axis=1)
         df_all = df_all.loc[~key.duplicated(keep="last")].copy()
-    # Recompute est_derniere_date
+    # Recalc dernière date
     if "date" in df_all.columns:
         dmax = pd.to_datetime(df_all["date"], errors="coerce").max()
         df_all["est_derniere_date"] = (pd.to_datetime(df_all["date"], errors="coerce") == dmax)
-    # Sort for readability
+    # Tri lisible
     sort_cols = [c for c in ["date", "organisationId", "brand"] if c in df_all.columns]
     if sort_cols:
         df_all = df_all.sort_values(sort_cols)
-    # Write back
+    # Écriture complète
     ws.clear()
     values = [list(df_all.columns)] + df_all.astype(object).where(pd.notnull(df_all), "").values.tolist()
     ws.update("A1", values)
     return df_all
-# ---- end helpers ----
+# ---- fin helpers ----
 
 st.sidebar.header("📂 Importer les fichiers")
 stock_files = st.sidebar.file_uploader("Fichiers de stock (un par magasin)", type=["csv"], accept_multiple_files=True)
@@ -161,15 +138,14 @@ if stock_files and product_file:
     historique_df["date"] = historique_df["date"].dt.strftime("%Y-%m-%d")
 
     historique_df.to_csv(HISTO_FILE, index=False)
-
     st.success(f"✅ Données ajoutées à l'historique ({len(report_df)} lignes)")
 
     if st.button("📤 Mettre à jour Google Sheets + envoyer par e-mail"):
         try:
-            # Upsert: merge existing sheet content with historique_df
+            # Upsert (pas d’écrasement)
             df_all = _gsheet_upsert_dataframe(SPREADSHEET_ID, SHEET_NAME, historique_df)
 
-            # Préparer et envoyer email
+            # Email
             default_extra_recipients = [
                 "alexandre.audinot@latribu.fr",
                 "jm.lelann@latribu.fr",
